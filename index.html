@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>Jinvani Jain Focus Flipbook</title>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/page-flip@2.0.7/dist/js/page-flip.browser.js"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      color: #543939;
+      background: #eee3d2;
+    }
+
+    header {
+      padding: 16px;
+      text-align: center;
+      background: #fffaf6;
+    }
+
+    h1 {
+      margin: 0;
+      color: #7b2936;
+      font-size: clamp(18px, 3vw, 26px);
+    }
+
+    header p {
+      margin: 5px 0 0;
+      font-size: 12px;
+    }
+
+    .viewer {
+      width: 100%;
+      min-height: 65vh;
+      padding: 24px 12px;
+      overflow: hidden;
+    }
+
+    #book {
+      margin: auto;
+      background: transparent;
+    }
+
+    #book .stf__wrapper,
+    #book .stf__block {
+      background: transparent !important;
+    }
+
+    .pdf-page {
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .pdf-page img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+
+    #loading {
+      width: min(420px, 90%);
+      margin: 70px auto;
+      padding: 24px;
+      background: #fffaf6;
+      border-radius: 14px;
+      text-align: center;
+    }
+
+    progress {
+      width: 100%;
+      margin-top: 14px;
+      accent-color: #7b2936;
+    }
+
+    #error {
+      max-width: 600px;
+      margin: 25px auto;
+      padding: 20px;
+      background: #fff0f0;
+      color: #a02020;
+      border-radius: 12px;
+      text-align: center;
+      overflow-wrap: anywhere;
+    }
+
+    .controls {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 12px 12px 24px;
+    }
+
+    button,
+    .download {
+      border: 0;
+      border-radius: 24px;
+      padding: 11px 18px;
+      background: #7b2936;
+      color: white;
+      font-size: 14px;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    #counter {
+      min-width: 115px;
+      text-align: center;
+      font-size: 14px;
+      font-weight: bold;
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>Jinvani Jain Focus Flipbook</h1>
+    <p>Digital Magazine</p>
+  </header>
+
+  <main class="viewer">
+    <div id="loading">
+      <strong>Magazine तैयार हो रही है…</strong>
+      <p id="loading-text">PDF खोली जा रही है…</p>
+      <progress id="progress" value="0" max="100"></progress>
+    </div>
+
+    <div id="error" hidden></div>
+    <div id="book"></div>
+  </main>
+
+  <nav id="controls" class="controls" hidden>
+    <button id="previous" disabled>❮ Previous</button>
+    <span id="counter"></span>
+    <button id="next" disabled>Next ❯</button>
+    <button id="fullscreen">⛶ Fullscreen</button>
+
+    <a
+      class="download"
+      href="magazine.pdf"
+      download="Jinvani-Jain-Focus.pdf"
+    >
+      ⇩ Download PDF
+    </a>
+  </nav>
+
+  <script>
+    const PDF_FILE = "magazine.pdf";
+
+    const book = document.getElementById("book");
+    const loading = document.getElementById("loading");
+    const loadingText = document.getElementById("loading-text");
+    const progress = document.getElementById("progress");
+    const errorBox = document.getElementById("error");
+    const controls = document.getElementById("controls");
+    const previous = document.getElementById("previous");
+    const next = document.getElementById("next");
+    const counter = document.getElementById("counter");
+
+    let flipbook;
+    let totalPages = 0;
+    let isTurning = false;
+    const imageUrls = [];
+
+    function showError(error) {
+      console.error(error);
+      loading.hidden = true;
+      errorBox.hidden = false;
+      errorBox.textContent =
+        "Magazine load नहीं हुई। Error: " +
+        (error.message || String(error));
+    }
+
+    async function renderPage(pdfPage) {
+      const original = pdfPage.getViewport({ scale: 1 });
+
+      // Limit image dimensions to reduce browser memory usage.
+      const scale = Math.min(
+        2,
+        1600 / Math.max(original.width, original.height)
+      );
+
+      const viewport = pdfPage.getViewport({ scale });
+      const canvas = document.createElement("canvas");
+
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+
+      const context = canvas.getContext("2d", { alpha: false });
+
+      await pdfPage.render({
+        canvasContext: context,
+        viewport,
+        background: "rgb(255,255,255)"
+      }).promise;
+
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob((result) => {
+          if (result) resolve(result);
+          else reject(new Error("PDF page render नहीं हो पाया।"));
+        }, "image/jpeg", 0.9);
+      });
+
+      canvas.width = 0;
+      canvas.height = 0;
+      pdfPage.cleanup();
+
+      const url = URL.createObjectURL(blob);
+      imageUrls.push(url);
+
+      return url;
+    }
+
+    function syncView() {
+      if (!flipbook) return;
+
+      const index = flipbook.getCurrentPageIndex();
+      const landscape = flipbook.getOrientation() === "landscape";
+
+      const frontCover = index === 0;
+
+      // With showCover enabled, an even page count ends
+      // with a single back cover.
+      const singleBackCover =
+        totalPages % 2 === 0 && index === totalPages - 1;
+
+      const paired =
+        landscape && !frontCover && !singleBackCover;
+
+      const endIndex = paired
+        ? Math.min(index + 1, totalPages - 1)
+        : index;
+
+      counter.textContent = paired
+        ? `Pages ${index + 1}–${endIndex + 1} / ${totalPages}`
+        : `Page ${index + 1} / ${totalPages}`;
+
+      previous.disabled = isTurning || index === 0;
+      next.disabled = isTurning || endIndex === totalPages - 1;
+
+      // Centre a closed cover; centre the full spread inside.
+      let offset = 0;
+
+      if (landscape && !isTurning) {
+        const pageWidth = flipbook.getBoundsRect().pageWidth;
+
+        if (frontCover) offset = -pageWidth / 2;
+        else if (singleBackCover) offset = pageWidth / 2;
+      }
+
+      book.style.transform = `translateX(${offset}px)`;
+    }
+
+    async function start() {
+      try {
+        if (!window.pdfjsLib || !window.St) {
+          throw new Error(
+            "Library नहीं खुली। Internet connection check करके refresh करें।"
+          );
+        }
+
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+          "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+        const pdf = await pdfjsLib.getDocument(PDF_FILE).promise;
+        totalPages = pdf.numPages;
+
+        if (totalPages < 2) {
+          await pdf.destroy();
+          throw new Error("Flipbook के लिए कम-से-कम 2 PDF pages रखें।");
+        }
+
+        const firstPage = await pdf.getPage(1);
+        const firstViewport = firstPage.getViewport({ scale: 1 });
+        const ratio = firstViewport.height / firstViewport.width;
+
+        const pageElements = [];
+
+        for (let number = 1; number <= totalPages; number++) {
+          loadingText.textContent =
+            `Page ${number} / ${totalPages} तैयार हो रहा है…`;
+
+          const pdfPage = number === 1
+            ? firstPage
+            : await pdf.getPage(number);
+
+          const url = await renderPage(pdfPage);
+
+          const element = document.createElement("div");
+          element.className = "pdf-page";
+
+          if (number === 1 || number === totalPages) {
+            element.dataset.density = "hard";
+          }
+
+          const img = document.createElement("img");
+          img.src = url;
+          img.alt = `Magazine page ${number}`;
+          img.draggable = false;
+
+          element.appendChild(img);
+          pageElements.push(element);
+
+          progress.value = (number / totalPages) * 100;
+        }
+
+        await pdf.destroy();
+
+        // Insert real HTML pages, avoiding the white canvas backdrop.
+        book.replaceChildren(...pageElements);
+        loading.hidden = true;
+
+        const maxPageWidth = Math.max(
+          280,
+          Math.min(650, (window.innerHeight - 190) / ratio)
+        );
+
+        flipbook = new St.PageFlip(book, {
+          width: maxPageWidth,
+          height: maxPageWidth * ratio,
+
+          size: "stretch",
+          minWidth: 240,
+          maxWidth: maxPageWidth,
+          minHeight: 240 * ratio,
+          maxHeight: maxPageWidth * ratio,
+
+          showCover: true,
+          usePortrait: true,
+          autoSize: true,
+          drawShadow: true,
+          maxShadowOpacity: 0.25,
+          flippingTime: 700,
+          mobileScrollSupport: false
+        });
+
+        flipbook.on("init", () => {
+          controls.hidden = false;
+          requestAnimationFrame(syncView);
+        });
+
+        flipbook.on("flip", () => {
+          requestAnimationFrame(syncView);
+        });
+
+        flipbook.on("changeOrientation", () => {
+          requestAnimationFrame(syncView);
+        });
+
+        flipbook.on("changeState", (event) => {
+          isTurning = event.data !== "read";
+          syncView();
+        });
+
+        flipbook.loadFromHTML(pageElements);
+
+      } catch (error) {
+        showError(error);
+      }
+    }
+
+    previous.addEventListener("click", () => {
+      if (flipbook && !isTurning) flipbook.flipPrev();
+    });
+
+    next.addEventListener("click", () => {
+      if (flipbook && !isTurning) flipbook.flipNext();
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowLeft" && !previous.disabled) {
+        previous.click();
+      }
+
+      if (event.key === "ArrowRight" && !next.disabled) {
+        next.click();
+      }
+    });
+
+    document.getElementById("fullscreen")
+      .addEventListener("click", async () => {
+        try {
+          if (document.fullscreenElement) {
+            await document.exitFullscreen();
+          } else if (document.documentElement.requestFullscreen) {
+            await document.documentElement.requestFullscreen();
+          }
+        } catch (error) {
+          console.error(error);
+        }
+      });
+
+    window.addEventListener("resize", () => {
+      requestAnimationFrame(syncView);
+    });
+
+    window.addEventListener("beforeunload", () => {
+      imageUrls.forEach((url) => URL.revokeObjectURL(url));
+    });
+
+    start();
+  </script>
+</body>
+</html>
